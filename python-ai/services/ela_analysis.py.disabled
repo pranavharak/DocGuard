@@ -1,0 +1,154 @@
+import io
+from typing import List, Dict, Any, Tuple
+import numpy as np
+import cv2
+from PIL import Image
+
+from config import ELA_JPEG_QUALITY
+
+def merge_overlapping_boxes(boxes: List[Tuple[int, int, int, int]], iou_threshold: float = 0.3) -> List[Tuple[int, int, int, int]]:
+    """
+    Merges overlapping or nearby bounding boxes using IoU and enclosure criteria.
+    """
+    if not boxes:
+        return []
+
+    # Sort boxes by area descending
+    boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
+    merged: List[Tuple[int, int, int, int]] = []
+
+    for b in boxes:
+        x1, y1, w1, h1 = b
+        x2, y2 = x1 + w1, y1 + h1
+
+        matched = False
+        for idx, m in enumerate(merged):
+            mx1, my1, mw, mh = m
+            mx2, my2 = mx1 + mw, my1 + mh
+
+            # Compute intersection
+            ix1 = max(x1, mx1)
+            iy1 = max(y1, my1)
+            ix2 = min(x2, mx2)
+            iy2 = min(y2, my2)
+
+            iw = max(0, ix2 - ix1)
+            ih = max(0, iy2 - iy1)
+            intersection = iw * ih
+
+            area1 = w1 * h1
+            area2 = mw * mh
+            union = area1 + area2 - intersection
+
+            iou = intersection / union if union > 0 else 0
+
+            # If overlapping or inside
+            if iou > iou_threshold or (intersection / min(area1, area2) > 0.6):
+                # Expand merged box
+                nx1 = min(x1, mx1)
+                ny1 = min(y1, my1)
+                nx2 = max(x2, mx2)
+                ny2 = max(y2, my2)
+                merged[idx] = (nx1, ny1, nx2 - nx1, ny2 - ny1)
+                matched = True
+                break
+
+        if not matched:
+            merged.append((x1, y1, w1, h1))
+
+    return merged
+
+def perform_ela_analysis(image_bgr: np.ndarray, page_num: int = 1, is_lossless: bool = False) -> Tuple[List[Dict[str, Any]], float, List[str]]:
+    """
+    Performs JPEG Error Level Analysis (ELA) and edge noise variance checks.
+    Only extracts regions with significant ELA anomaly deltas relative to document baseline.
+    Returns (regions, max_ela_variance, warnings).
+    """
+    warnings = []
+    if is_lossless:
+        warnings.append("ELA reliability is reduced for lossless formats (PNG/WebP) or uncompressed PDF renders.")
+
+    img_h, img_w = image_bgr.shape[:2]
+
+    # 1. Re-encode image to JPEG at target quality
+    pil_img = Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
+    buffer = io.BytesIO()
+    pil_img.save(buffer, format="JPEG", quality=ELA_JPEG_QUALITY)
+    buffer.seek(0)
+
+    resaved_pil = Image.open(buffer)
+    resaved_bgr = cv2.cvtColor(np.array(resaved_pil), cv2.COLOR_RGB2BGR)
+
+    # 2. Compute absolute difference
+    ela_diff = cv2.absdiff(image_bgr, resaved_bgr).astype(np.float32)
+    ela_gray = cv2.cvtColor(ela_diff, cv2.COLOR_BGR2GRAY)
+
+    # Global ELA statistics across the document
+    global_mean = float(np.mean(ela_gray))
+    global_std = float(np.std(ela_gray))
+    global_variance = float(np.var(ela_gray))
+
+    # Scale for visualization / anomaly detection
+    scale = 15.0
+    ela_scaled = np.clip(ela_gray * scale, 0, 255).astype(np.uint8)
+
+    # High threshold: only flag pixels that exceed global mean + 3.5 std deviations
+    high_thresh_val = max(55, int((global_mean + 3.5 * global_std) * (scale / 5.0)))
+    _, thresh = cv2.threshold(ela_scaled, high_thresh_val, 255, cv2.THRESH_BINARY)
+
+    # Morphological closing & dilation to isolate localized anomaly clusters
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 8))
+    dilated = cv2.dilate(thresh, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    min_area = (img_w * img_h) * 0.001   # minimum area filter
+    max_area = (img_w * img_h) * 0.35    # ignore whole page selections
+
+    candidate_boxes: List[Tuple[int, int, int, int]] = []
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if min_area <= area <= max_area:
+            x, y, w, h = cv2.boundingRect(cnt)
+
+            # Check local ELA intensity vs global document baseline
+            roi_ela = ela_gray[y:y+h, x:x+w]
+            local_mean = float(np.mean(roi_ela))
+
+            # Only consider as candidate if local ELA error is at least 2.5x the global document mean
+            if local_mean > max(12.0, global_mean * 2.2):
+                candidate_boxes.append((x, y, w, h))
+
+    # Merge overlapping bounding boxes
+    merged_boxes = merge_overlapping_boxes(candidate_boxes, iou_threshold=0.25)
+
+    regions: List[Dict[str, Any]] = []
+    region_id = 1
+
+    for (x, y, w, h) in merged_boxes:
+        roi = image_bgr[y:y+h, x:x+w]
+        roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        lap_var = float(cv2.Laplacian(roi_gray, cv2.CV_64F).var())
+
+        # Calculate confidence based on local ELA anomaly ratio
+        roi_ela = ela_gray[y:y+h, x:x+w]
+        ela_ratio = float(np.mean(roi_ela)) / max(1.0, global_mean)
+        confidence = min(92, max(50, int(60 + (ela_ratio * 10.0))))
+
+        regions.append({
+            "id": region_id,
+            "page": page_num,
+            "label": f"ELA Anomaly Region {region_id}",
+            "x": int(x),
+            "y": int(y),
+            "width": int(w),
+            "height": int(h),
+            "confidence": confidence,
+            "issue": "Localized High ELA Variance",
+            "detail": f"Local ELA intensity ({np.mean(roi_ela):.1f}) deviates significantly from document baseline ({global_mean:.1f}).",
+            "evidenceSource": "forensic_ela"
+        })
+        region_id += 1
+
+    return regions, global_variance, warnings

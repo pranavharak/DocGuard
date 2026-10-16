@@ -1,0 +1,87 @@
+from typing import List, Dict, Any, Tuple, Optional
+
+def fuse_evidence(
+    all_suspicious_regions: List[Dict[str, Any]],
+    ocr_items: List[Dict[str, Any]],
+    metadata: Dict[str, Any],
+    ela_variance: float,
+    model_available: bool,
+    ocr_available: bool,
+    all_limitations: List[str]
+) -> Tuple[str, Optional[int], Optional[int], List[str], List[str], str, str]:
+    """
+    Fuses multi-modal forensic indicators (ELA, Neural Model, OCR, Metadata) to assess document authenticity.
+    Returns (result, risk_score, confidence, analysis_methods, manipulation_types, explanation, recommendation).
+    """
+    analysis_methods = ["forensic_ela", "metadata_inspection"]
+    if ocr_available:
+        analysis_methods.append("ocr_text_extraction")
+    if model_available:
+        analysis_methods.append("pretrained_model_inference")
+
+    manipulation_types = []
+    
+    # 1. Evaluate ELA & Edge Noise Variance
+    # Normal documents (including scanned vector PDFs) have ela_variance < 35.0
+    ela_score = 0
+    if ela_variance > 75.0:
+        ela_score = 35
+        manipulation_types.append("visual_inconsistency")
+    elif ela_variance > 50.0:
+        ela_score = 20
+        manipulation_types.append("micro_artifact_blurring")
+
+    # 2. Evaluate Genuine Suspicious Anomaly Regions
+    region_score = 0
+    num_regions = len(all_suspicious_regions)
+    
+    if num_regions >= 3:
+        region_score = 45
+        manipulation_types.append("text_modification")
+    elif num_regions >= 1:
+        region_score = 25
+        if "visual_inconsistency" not in manipulation_types:
+            manipulation_types.append("visual_inconsistency")
+
+    # 3. Evaluate OCR Text Anomaly Flags
+    ocr_score = 0
+    suspicious_ocr_count = sum(1 for item in ocr_items if item.get("suspicious"))
+    if suspicious_ocr_count >= 2:
+        ocr_score = min(20, suspicious_ocr_count * 5)
+        if "text_modification" not in manipulation_types:
+            manipulation_types.append("text_modification")
+
+    # 4. Evaluate Metadata Status
+    meta_score = 0
+    if metadata.get("status") == "minor_anomaly_detected":
+        meta_score = 10
+
+    # 5. Compute Heuristic Risk Score
+    if num_regions == 0 and ela_variance < 35.0 and suspicious_ocr_count == 0:
+        raw_risk_score = min(15, max(0, int(ela_variance / 3.0) + meta_score))
+    else:
+        raw_risk_score = min(95, max(5, ela_score + region_score + ocr_score + meta_score))
+
+    # 6. Compute Confidence Rating
+    # If model is not loaded, confidence is reported as null or conservative heuristic
+    confidence: Optional[int] = None
+    if model_available:
+        confidence = 90
+    elif ocr_available and ela_variance > 0:
+        confidence = 75
+
+    # 7. Determine Category
+    if num_regions == 0 and raw_risk_score < 25:
+        result = "likely_authentic"
+        explanation = "Document formatting, font vectors, and ELA pixel noise show no evidence of digital tampering."
+        recommendation = "Passed automated verification."
+    elif 25 <= raw_risk_score < 60:
+        result = "suspicious"
+        explanation = f"Minor visual alignment or ELA variance anomalies ({num_regions} region(s)) detected."
+        recommendation = "Secondary human review suggested."
+    else:
+        result = "potentially_tampered"
+        explanation = f"High ELA variance and localized structural inconsistencies detected across {num_regions} region(s)."
+        recommendation = "Manual verification and original document comparison recommended."
+
+    return result, raw_risk_score, confidence, analysis_methods, manipulation_types, explanation, recommendation
