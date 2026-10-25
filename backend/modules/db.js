@@ -159,6 +159,114 @@ const update_document_analysis = async (uemail, docIdentifier, analysisData) => 
   }
 };
 
+const delete_document = async (uemail, docIdentifier) => {
+  try {
+    const user = await User.findOne({ email: uemail });
+    if (!user) return false;
+
+    const docIndex = user.documents.findIndex(
+      (d) => d._id.toString() === docIdentifier || d.filename === docIdentifier
+    );
+    if (docIndex === -1) return false;
+
+    const [deletedDoc] = user.documents.splice(docIndex, 1);
+    await user.save();
+    return deletedDoc;
+  } catch (err) {
+    console.log(err);
+    return false;
+  }
+};
+
+const classifyVerdict = (result, riskScore) => {
+  const lower = (result || '').toLowerCase().trim();
+  if (lower.includes('tamper')) return 'potentiallyTampered';
+  if (lower.includes('suspicious')) return 'suspicious';
+  if (lower.includes('authentic') || lower.includes('clean') || lower.includes('pass')) return 'likelyAuthentic';
+
+  if (riskScore !== null && riskScore !== undefined && !isNaN(Number(riskScore))) {
+    const score = Number(riskScore);
+    if (score >= 55) return 'potentiallyTampered';
+    if (score >= 45) return 'suspicious';
+    return 'likelyAuthentic';
+  }
+
+  return 'unclassified';
+};
+
+const calculateUserStats = (documents) => {
+  const completedDocs = (documents || []).filter((d) => d.analysisStatus === 'completed');
+  completedDocs.sort((a, b) => new Date(b.dateOfUpload || 0) - new Date(a.dateOfUpload || 0));
+
+  const seenKeys = new Set();
+  const distinctDocs = [];
+
+  for (const doc of completedDocs) {
+    const key = (doc.metadata && doc.metadata.sha256 && doc.metadata.sha256 !== 'N/A')
+      ? 'sha:' + doc.metadata.sha256
+      : 'file:' + (doc.filename || doc._id.toString());
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      distinctDocs.push(doc);
+    }
+  }
+
+  let likelyAuthentic = 0;
+  let suspicious = 0;
+  let potentiallyTampered = 0;
+  let unclassified = 0;
+
+  for (const doc of distinctDocs) {
+    const category = classifyVerdict(doc.result, doc.riskScore);
+    if (category === 'likelyAuthentic') likelyAuthentic++;
+    else if (category === 'suspicious') suspicious++;
+    else if (category === 'potentiallyTampered') potentiallyTampered++;
+    else unclassified++;
+  }
+
+  const totalAnalyzed = distinctDocs.length;
+  const percentages = {
+    likelyAuthentic: totalAnalyzed > 0 ? Number(((likelyAuthentic / totalAnalyzed) * 100).toFixed(1)) : 0,
+    suspicious: totalAnalyzed > 0 ? Number(((suspicious / totalAnalyzed) * 100).toFixed(1)) : 0,
+    potentiallyTampered: totalAnalyzed > 0 ? Number(((potentiallyTampered / totalAnalyzed) * 100).toFixed(1)) : 0
+  };
+
+  const highRiskDocs = distinctDocs.filter((d) => classifyVerdict(d.result, d.riskScore) === 'potentiallyTampered');
+  highRiskDocs.sort((a, b) => (b.riskScore || 0) - (a.riskScore || 0) || new Date(b.dateOfUpload || 0) - new Date(a.dateOfUpload || 0));
+
+  let criticalAlert = null;
+  if (highRiskDocs.length > 0) {
+    const topDoc = highRiskDocs[0];
+    criticalAlert = {
+      hasAlert: true,
+      documentId: topDoc._id,
+      filename: topDoc.filename,
+      riskScore: topDoc.riskScore,
+      confidence: topDoc.confidence,
+      result: topDoc.result,
+      issue: topDoc.suspiciousRegions?.[0]?.issue || topDoc.explanation || 'Visual pattern inconsistency detected.',
+      detail: topDoc.explanation || 'Automated analysis identified visual irregularities deviating from standard baseline parameters.',
+      docRef: topDoc
+    };
+  } else {
+    criticalAlert = {
+      hasAlert: false,
+      message: 'No high-risk documents detected.'
+    };
+  }
+
+  return {
+    totalAnalyzed,
+    likelyAuthentic,
+    suspicious,
+    potentiallyTampered,
+    unclassified,
+    percentages,
+    criticalAlert,
+    distinctDocs
+  };
+};
+
 module.exports = {
   insertUserData,
   fetchData,
@@ -166,5 +274,8 @@ module.exports = {
   fetch_documents,
   fetch_document,
   update_document_status,
-  update_document_analysis
+  update_document_analysis,
+  delete_document,
+  classifyVerdict,
+  calculateUserStats
 };
