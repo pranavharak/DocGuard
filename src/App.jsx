@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import MetricsOverview from './components/MetricsOverview';
@@ -26,9 +26,24 @@ export default function App() {
   const [isAnalyzeModalOpen, setIsAnalyzeModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [dashboardError, setDashboardError] = useState(null);
 
-  // Documents are loaded from the real backend. No hardcoded demo data.
+  // Documents and dynamically calculated statistics from backend
   const [documents, setDocuments] = useState([]);
+  const [stats, setStats] = useState({
+    totalAnalyzed: 0,
+    likelyAuthentic: 0,
+    suspicious: 0,
+    potentiallyTampered: 0,
+    unclassified: 0,
+    percentages: {
+      likelyAuthentic: 0,
+      suspicious: 0,
+      potentiallyTampered: 0
+    }
+  });
+  const [criticalAlert, setCriticalAlert] = useState(null);
 
   // Sync dark mode class on <html> element
   useEffect(() => {
@@ -41,59 +56,81 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Fetch Documents dynamically from backend when logged in
-  useEffect(() => {
+  // Fetch Documents and Statistics dynamically from backend
+  const fetchDashboardData = useCallback(async () => {
     if (!token) return;
+    setIsLoadingDocs(true);
+    setIsLoadingStats(true);
+    setDashboardError(null);
 
-    const fetchUserDocuments = async () => {
-      setIsLoadingDocs(true);
-      try {
-        const response = await fetch(`${API_BASE_URL}/dashboard/documents`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+    try {
+      const [docsRes, statsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/dashboard/documents`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`${API_BASE_URL}/dashboard/stats`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ]);
 
-        const data = await response.json();
-
-        if (response.ok && data.message === 'success' && Array.isArray(data.documents)) {
-          if (data.documents.length > 0) {
-            const formattedDocs = data.documents.map((doc, idx) => {
-              const analysis = doc.analysis || {};
-              const rawResult = doc.result || analysis.result || 'pending';
-              const rawRisk = doc.riskScore ?? analysis.riskScore ?? null;
-              const rawConf = doc.confidence ?? analysis.confidence ?? null;
-              return {
-                id: doc._id || idx + 1,
-                name: doc.filename || doc.fileName || `Document_${idx + 1}.pdf`,
-                type: doc.fileType || 'Document',
-                date: new Date(doc.dateOfUpload || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                result: rawResult,
-                riskPercent: rawRisk,
-                confidence: rawConf,
-                fileUrl: doc.fileUrl || null,
-                suspiciousRegions: doc.suspiciousRegions || analysis.suspiciousRegions || [],
-                manipulationTypes: doc.manipulationTypes || analysis.manipulationTypes || [],
-                ocr: doc.ocr || analysis.ocr || [],
-                metadata: doc.metadata || analysis.metadata || {},
-                explanation: doc.explanation || analysis.explanation || '',
-                recommendation: doc.recommendation || analysis.recommendation || '',
-                raw: doc
-              };
-            });
-            setDocuments(formattedDocs);
-          }
+      if (docsRes.ok) {
+        const docsData = await docsRes.json();
+        if (docsData.message === 'success' && Array.isArray(docsData.documents)) {
+          const formattedDocs = docsData.documents.map((doc, idx) => {
+            const analysis = doc.analysis || {};
+            const rawResult = doc.result || analysis.result || 'pending';
+            const rawRisk = doc.riskScore ?? analysis.riskScore ?? null;
+            const rawConf = doc.confidence ?? analysis.confidence ?? null;
+            return {
+              id: doc._id || idx + 1,
+              name: doc.filename || doc.fileName || `Document_${idx + 1}.pdf`,
+              type: doc.fileType || 'Document',
+              date: new Date(doc.dateOfUpload || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+              result: rawResult,
+              riskPercent: rawRisk,
+              confidence: rawConf,
+              fileUrl: doc.fileUrl || null,
+              suspiciousRegions: doc.suspiciousRegions || analysis.suspiciousRegions || [],
+              manipulationTypes: doc.manipulationTypes || analysis.manipulationTypes || [],
+              ocr: doc.ocr || analysis.ocr || [],
+              metadata: doc.metadata || analysis.metadata || {},
+              explanation: doc.explanation || analysis.explanation || '',
+              recommendation: doc.recommendation || analysis.recommendation || '',
+              raw: doc
+            };
+          });
+          setDocuments(formattedDocs);
         }
-      } catch (err) {
-        console.error('Error fetching documents from backend:', err);
-      } finally {
-        setIsLoadingDocs(false);
+      } else {
+        const errJson = await docsRes.json().catch(() => null);
+        setDashboardError(errJson?.message || 'Error fetching documents');
       }
-    };
 
-    fetchUserDocuments();
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        if (statsData.message === 'success' && statsData.stats) {
+          setStats(statsData.stats);
+          setCriticalAlert(statsData.criticalAlert || null);
+        }
+      } else {
+        const errJson = await statsRes.json().catch(() => null);
+        setDashboardError(errJson?.message || 'Error fetching dashboard statistics');
+      }
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setDashboardError('Failed to communicate with the DocuGuard backend server.');
+    } finally {
+      setIsLoadingDocs(false);
+      setIsLoadingStats(false);
+    }
   }, [token]);
+
+  // Trigger initial fetch when token is present, and refresh when dashboard tab is active
+  useEffect(() => {
+    if (token) {
+      fetchDashboardData();
+    }
+  }, [token, activeTab, fetchDashboardData]);
 
   const handleLoginSuccess = (newToken, newUsername) => {
     setToken(newToken);
@@ -107,11 +144,26 @@ export default function App() {
     setToken(null);
     setUsername('');
     setSelectedDocForForensic(null);
+    setDocuments([]);
+    setStats({
+      totalAnalyzed: 0,
+      likelyAuthentic: 0,
+      suspicious: 0,
+      potentiallyTampered: 0,
+      unclassified: 0,
+      percentages: {
+        likelyAuthentic: 0,
+        suspicious: 0,
+        potentiallyTampered: 0
+      }
+    });
+    setCriticalAlert(null);
   };
 
   const handleUploadComplete = (newDoc) => {
     setDocuments((prev) => [newDoc, ...prev]);
     setSelectedDocForForensic(newDoc);
+    fetchDashboardData();
   };
 
   const handleOpenForensicInspection = async (doc) => {
@@ -158,19 +210,6 @@ export default function App() {
     return <AuthView onLoginSuccess={handleLoginSuccess} />;
   }
 
-  // Derived Statistics
-  const totalAnalyzed = Math.max(128, documents.length);
-  const authenticCount = documents.filter(d => d.result === 'Likely Authentic').length || 91;
-  const suspiciousCount = documents.filter(d => d.result === 'Suspicious').length || 24;
-  const tamperedCount = documents.filter(d => d.result === 'Potentially Tampered').length || 13;
-
-  const stats = {
-    total: totalAnalyzed,
-    authentic: authenticCount,
-    suspicious: suspiciousCount,
-    tampered: tamperedCount
-  };
-
   return (
     <div className="flex min-h-screen bg-[#f8fafc] dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200">
       
@@ -202,15 +241,27 @@ export default function App() {
           
           {activeTab === 'dashboard' && (
             <>
+              {dashboardError && (
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-800 dark:text-amber-200 rounded-2xl text-xs flex items-center justify-between">
+                  <span>⚠️ {dashboardError}</span>
+                  <button onClick={fetchDashboardData} className="font-bold underline cursor-pointer ml-3">
+                    Retry
+                  </button>
+                </div>
+              )}
+
               {/* Section 1: Hero Banner & Metrics Cards */}
               <MetricsOverview
                 onOpenUpload={() => setActiveTab('analyze')}
                 stats={stats}
+                username={username}
+                isLoading={isLoadingStats}
               />
 
               {/* Section 2: Flagged Tampering Alert Banner */}
               <CriticalAlertBanner
-                onOpenForensic={() => handleOpenForensicInspection(documents[0])}
+                alertData={criticalAlert}
+                onOpenForensic={(targetDoc) => handleOpenForensicInspection(targetDoc || documents[0])}
               />
 
               {/* Section 3: Two Column Layout */}

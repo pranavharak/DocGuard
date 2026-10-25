@@ -1,7 +1,40 @@
 import React from 'react';
-import { ShieldAlert, ArrowRight } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ArrowRight } from 'lucide-react';
 
-export default function CriticalAlertBanner({ onOpenForensic }) {
+export default function CriticalAlertBanner({ alertData, onOpenForensic }) {
+  const hasAlert = alertData?.hasAlert;
+
+  if (!hasAlert) {
+    return (
+      <div className="bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-900/50 rounded-2xl p-4 sm:p-5 shadow-sm transition-all duration-200">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 dark:bg-emerald-700 text-white flex items-center justify-center shadow-md shadow-emerald-600/20 shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-emerald-950 dark:text-emerald-200">
+                  No High-Risk Documents Detected
+                </h3>
+                <span className="bg-emerald-600 text-white text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-md">
+                  HEALTHY
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-0.5">
+                All completed document analyses in your workspace conform to baseline authenticity standards.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const filename = alertData.filename || 'Document.pdf';
+  const riskScore = alertData.riskScore ?? 0;
+  const issue = alertData.issue || alertData.detail || 'Localized visual pattern anomaly detected';
+
   return (
     <div className="bg-rose-50/90 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-4 sm:p-5 shadow-sm transition-all duration-200">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -14,7 +47,7 @@ export default function CriticalAlertBanner({ onOpenForensic }) {
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm sm:text-base font-bold text-rose-950 dark:text-rose-200">
-                Flagged Tampering Alert — High Risk (82%)
+                Flagged Tampering Alert — High Risk ({riskScore}%)
               </h3>
               <span className="bg-rose-700 text-white text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-md">
                 CRITICAL
@@ -22,14 +55,14 @@ export default function CriticalAlertBanner({ onOpenForensic }) {
             </div>
             
             <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-              Recent document <span className="font-mono font-bold text-slate-900 dark:text-white bg-rose-100 dark:bg-rose-900/50 px-1.5 py-0.5 rounded">BE_Marksheet.pdf</span> detected with localized font mismatch & pixel alteration in the CGPA field.
+              Recent document <span className="font-mono font-bold text-slate-900 dark:text-white bg-rose-100 dark:bg-rose-900/50 px-1.5 py-0.5 rounded">{filename}</span>: {issue}
             </p>
           </div>
         </div>
 
         {/* Right Action Button */}
         <button
-          onClick={onOpenForensic}
+          onClick={() => onOpenForensic && onOpenForensic(alertData.document || alertData)}
           className="inline-flex items-center justify-center gap-2 bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md shadow-rose-700/20 hover:shadow-lg transition-all duration-150 shrink-0 group self-start md:self-center"
         >
           <span className="tracking-wider uppercase text-[10px] bg-rose-900/60 px-1.5 py-0.5 rounded font-mono">BIOMETRICS</span>

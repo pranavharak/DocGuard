@@ -5,9 +5,50 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
   if (!isOpen || !documentData) return null;
 
   const [activeTab, setActiveTab] = useState('tamperMap');
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const isHighRisk = documentData.riskPercent >= 70 || documentData.result === 'Potentially Tampered';
-  const isMediumRisk = documentData.riskPercent >= 40 && documentData.riskPercent < 70;
+  const docName = documentData.name || documentData.filename || 'Document';
+  const docType = documentData.type || documentData.fileType || 'Educational Marksheet';
+  const riskPercent = documentData.riskPercent ?? documentData.riskScore ?? 0;
+  const confidence = documentData.confidence ?? 0;
+  const result = documentData.result || 'pending';
+  const suspiciousRegions = documentData.suspiciousRegions || documentData.raw?.suspiciousRegions || [];
+  const metadata = documentData.metadata || documentData.raw?.metadata || {};
+  const explanation = documentData.explanation || documentData.raw?.explanation || 'No forensic anomalies recorded.';
+  const docId = documentData.id || documentData.raw?._id || documentData._id;
+
+  const isHighRisk = riskPercent >= 60 || result.toLowerCase().includes('tampered');
+  const isMediumRisk = riskPercent >= 35 && riskPercent < 60;
+
+  const handleDownload = async () => {
+    if (!docId) {
+      alert('Document ID is not available.');
+      return;
+    }
+    try {
+      setIsDownloading(true);
+      const token = localStorage.getItem('docguard_token');
+      const res = await fetch(`http://localhost:5000/dashboard/document/${docId}/report`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        throw new Error(`Report generation failed (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DocuGuard_Forensic_Report_${docName.replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Error downloading report: ' + err.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
@@ -34,12 +75,12 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
                     ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
                     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 }`}>
-                  {documentData.result} ({documentData.riskPercent}%)
+                  {result} ({riskPercent}%)
                 </span>
               </div>
               <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>{documentData.name}</span>
-                <span className="text-xs text-slate-400 font-normal">({documentData.type})</span>
+                <span>{docName}</span>
+                <span className="text-xs text-slate-400 font-normal">({docType})</span>
               </h3>
             </div>
           </div>
@@ -63,7 +104,7 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>Biometric Heatmap & Font Map</span>
+            <span>Forensic Findings & Regions ({suspiciousRegions.length})</span>
           </button>
 
           <button
@@ -75,7 +116,7 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
             }`}
           >
             <Cpu className="w-4 h-4" />
-            <span>EXIF & Layer Metadata</span>
+            <span>Structural & EXIF Metadata</span>
           </button>
         </div>
 
@@ -84,112 +125,81 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
           {activeTab === 'tamperMap' ? (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
-              {/* Document Preview Box with Visual Highlight */}
-              <div className="lg:col-span-7 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
-                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-mono mb-2">
-                  <span>DOCUMENT SCAN PREVIEW (Page 1/1)</span>
-                  <span className="text-rose-600 font-bold dark:text-rose-400">1 ANOMALY DETECTED</span>
+              {/* Findings List */}
+              <div className="lg:col-span-7 space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-mono mb-1">
+                  <span>DETECTED SUSPICIOUS REGIONS</span>
+                  <span className={suspiciousRegions.length > 0 ? "text-rose-600 font-bold dark:text-rose-400" : "text-emerald-600 font-bold"}>
+                    {suspiciousRegions.length} FLAGGED
+                  </span>
                 </div>
 
-                {/* Mock Marksheet Content Visualizer */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-inner font-serif text-slate-800 dark:text-slate-200 space-y-4 relative">
-                  <div className="text-center border-b border-slate-200 dark:border-slate-800 pb-3">
-                    <h4 className="font-extrabold text-sm tracking-wider uppercase">BACHELOR OF ENGINEERING MARKSHEET</h4>
-                    <p className="text-[10px] font-sans text-slate-500">AUTONOMOUS UNIVERSITY OF TECHNOLOGY</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 text-xs font-sans gap-2 text-slate-600 dark:text-slate-400">
-                    <div>Student Name: <span className="font-semibold text-slate-900 dark:text-white">Pranav Harak</span></div>
-                    <div>Roll No: <span className="font-semibold text-slate-900 dark:text-white">BE2026-9041</span></div>
-                    <div>Branch: <span className="font-semibold text-slate-900 dark:text-white">Computer Science</span></div>
-                    <div>Year of Passing: <span className="font-semibold text-slate-900 dark:text-white">2026</span></div>
-                  </div>
-
-                  {/* Table mockup inside document */}
-                  <div className="border border-slate-200 dark:border-slate-800 rounded text-[11px] font-sans overflow-hidden">
-                    <div className="bg-slate-100 dark:bg-slate-800 p-1.5 font-bold grid grid-cols-3">
-                      <span>Subject</span>
-                      <span>Credits</span>
-                      <span>Grade</span>
-                    </div>
-                    <div className="p-1.5 grid grid-cols-3 border-t border-slate-100 dark:border-slate-800">
-                      <span>Deep Learning</span>
-                      <span>4</span>
-                      <span>O (Outstanding)</span>
-                    </div>
-                    <div className="p-1.5 grid grid-cols-3 border-t border-slate-100 dark:border-slate-800">
-                      <span>Software Architecture</span>
-                      <span>4</span>
-                      <span>A+</span>
-                    </div>
-                  </div>
-
-                  {/* TAMPERED HIGHLIGHT AREA */}
-                  <div className={`p-2.5 rounded-lg border-2 relative transition-all duration-200 ${
-                    isHighRisk 
-                      ? 'border-rose-500 bg-rose-500/10 shadow-lg shadow-rose-500/20' 
-                      : 'border-emerald-500 bg-emerald-500/10'
-                  }`}>
-                    <div className="flex items-center justify-between text-xs font-sans font-bold">
-                      <span>CUMULATIVE CGPA:</span>
-                      <span className="font-mono text-base font-extrabold text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950 px-2 py-0.5 rounded">
-                        9.85 / 10.0
-                      </span>
-                    </div>
-
-                    {isHighRisk && (
-                      <div className="absolute -top-3 -right-2 bg-rose-600 text-white text-[9px] font-mono uppercase font-extrabold px-2 py-0.5 rounded-full shadow-md animate-pulse">
-                        FONT MISMATCH DETECTED
+                {suspiciousRegions.length > 0 ? (
+                  suspiciousRegions.map((reg, idx) => (
+                    <div 
+                      key={idx}
+                      className="p-3.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          Finding 0{idx + 1}: {reg.label || `Region ${idx + 1}`}
+                        </span>
+                        <span className="text-[10px] font-mono font-bold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-2 py-0.5 rounded">
+                          {reg.confidence}% intensity
+                        </span>
                       </div>
-                    )}
+                      <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
+                        {reg.detail || reg.issue}
+                      </p>
+                      {reg.whyItMatters && (
+                        <p className="text-amber-800 dark:text-amber-300/90 bg-amber-50/60 dark:bg-amber-950/30 p-2 rounded-lg leading-relaxed font-sans text-[11px]">
+                          <strong>Why it matters:</strong> {reg.whyItMatters}
+                        </p>
+                      )}
+                      <div className="text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
+                        📍 Bounding Box: [x: {reg.x}, y: {reg.y}, w: {reg.width}, h: {reg.height}]
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-6 text-center space-y-2 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                    <h4 className="font-bold text-slate-900 dark:text-white text-sm">No Irregularities Detected</h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 font-sans">
+                      All visual patterns and pixel edge distributions conform to baseline authenticity standards.
+                    </p>
                   </div>
-                </div>
-
-                <div className="mt-3 text-[11px] font-mono text-slate-500 dark:text-slate-400 bg-slate-200/60 dark:bg-slate-900 p-2 rounded-lg">
-                  📍 Bounding Box: [x: 214, y: 480, w: 180, h: 42] · Font Delta: +14.2% kerning anomaly
-                </div>
+                )}
               </div>
 
-              {/* Right Side Forensic Analysis Metrics */}
+              {/* Right Side Summary & Confidence */}
               <div className="lg:col-span-5 space-y-4">
                 <h4 className="text-xs uppercase font-extrabold tracking-wider text-slate-400 dark:text-slate-500">
-                  FORENSIC VERDICT BREAKDOWN
+                  ASSESSMENT METRICS
                 </h4>
 
                 <div className="space-y-3">
                   <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800">
                     <div className="flex justify-between items-center text-xs font-bold mb-1">
-                      <span className="text-slate-700 dark:text-slate-300">Font Consistency Index</span>
-                      <span className={isHighRisk ? 'text-rose-600 font-mono' : 'text-emerald-600 font-mono'}>
-                        {isHighRisk ? 'FAILED (34%)' : 'PASSED (98%)'}
+                      <span className="text-slate-700 dark:text-slate-300">Visual Anomaly Risk</span>
+                      <span className={isHighRisk ? 'text-rose-600 font-mono' : isMediumRisk ? 'text-amber-600 font-mono' : 'text-emerald-600 font-mono'}>
+                        {riskPercent}% / 100
                       </span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={`h-full ${isHighRisk ? 'bg-rose-600' : 'bg-emerald-500'}`} style={{ width: isHighRisk ? '34%' : '98%' }}></div>
+                      <div className={`h-full ${isHighRisk ? 'bg-rose-600' : isMediumRisk ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, riskPercent)}%` }}></div>
                     </div>
                   </div>
 
                   <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800">
                     <div className="flex justify-between items-center text-xs font-bold mb-1">
-                      <span className="text-slate-700 dark:text-slate-300">Error Level Analysis (ELA)</span>
-                      <span className={isHighRisk ? 'text-rose-600 font-mono' : 'text-emerald-600 font-mono'}>
-                        {isHighRisk ? 'HIGH DELTA (92%)' : 'NORMAL (12%)'}
+                      <span className="text-slate-700 dark:text-slate-300">Model Reliability Confidence</span>
+                      <span className="text-indigo-600 dark:text-indigo-400 font-mono">
+                        {confidence}%
                       </span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={`h-full ${isHighRisk ? 'bg-rose-600' : 'bg-emerald-500'}`} style={{ width: isHighRisk ? '92%' : '12%' }}></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800">
-                    <div className="flex justify-between items-center text-xs font-bold mb-1">
-                      <span className="text-slate-700 dark:text-slate-300">Pixel Artifact Compression</span>
-                      <span className={isHighRisk ? 'text-amber-600 font-mono' : 'text-emerald-600 font-mono'}>
-                        {isHighRisk ? 'MODERATE (68%)' : 'CLEAN (05%)'}
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={`h-full ${isHighRisk ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: isHighRisk ? '68%' : '5%' }}></div>
+                      <div className="h-full bg-indigo-600" style={{ width: `${Math.min(100, confidence)}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -197,8 +207,8 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
                 {/* Explanation text */}
                 <div className="p-3.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-600 dark:text-slate-300 space-y-1">
                   <p className="font-bold text-slate-900 dark:text-white">Forensic Note:</p>
-                  <p className="leading-relaxed">
-                    Document exhibits localized font mismatch (Helvetica vs Arial Neue) in the CGPA numeric string and noticeable pixel noise around the boundary box indicating potential PDF text editing.
+                  <p className="leading-relaxed font-sans">
+                    {explanation}
                   </p>
                 </div>
               </div>
@@ -206,13 +216,28 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
             </div>
           ) : (
             <div className="space-y-3 font-mono text-xs text-slate-700 dark:text-slate-300">
-              <div className="bg-slate-900 text-slate-200 p-4 rounded-xl space-y-2">
-                <p><span className="text-indigo-400">PDF Producer:</span> Adobe PDF Library 15.0</p>
-                <p><span className="text-indigo-400">Creation Date:</span> 2026-09-12 14:22:01 UTC</p>
-                <p><span className="text-indigo-400">Modification Date:</span> 2026-09-12 14:28:44 UTC (Modified after initial export)</p>
-                <p><span className="text-indigo-400">SHA-256 Hash:</span> e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</p>
-                <p><span className="text-indigo-400">Tamper Confidence Score:</span> 0.824 (Threshold 0.45)</p>
+              <div className="bg-slate-900 text-slate-200 p-4 rounded-xl space-y-2.5">
+                <p><span className="text-indigo-400 font-bold">PDF Producer:</span> {metadata.pdfProducer || 'Not present in the file'}</p>
+                <p><span className="text-indigo-400 font-bold">Creation Date:</span> {metadata.creationDate || 'Not present in the file'}</p>
+                <p><span className="text-indigo-400 font-bold">Modification Date:</span> {metadata.modificationDate || 'Not present in the file'}</p>
+                <p><span className="text-indigo-400 font-bold">PDF Version:</span> {metadata.pdfVersion || 'N/A'}</p>
+                <p><span className="text-indigo-400 font-bold">Dimensions:</span> {metadata.dimensions || 'N/A'}</p>
+                <p><span className="text-indigo-400 font-bold">SHA-256 Hash:</span> <span className="break-all text-[11px] text-slate-300">{metadata.sha256 || 'N/A'}</span></p>
+                <p><span className="text-indigo-400 font-bold">Analysis Verdict:</span> {result} (Score: {riskPercent}/100)</p>
               </div>
+
+              {metadata.observations && metadata.observations.length > 0 && (
+                <div className="bg-slate-100 dark:bg-slate-800 p-4 rounded-xl space-y-1 font-sans">
+                  <span className="font-bold text-slate-900 dark:text-white font-mono text-[11px] uppercase block mb-1">
+                    Observations:
+                  </span>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-300 text-xs">
+                    {metadata.observations.map((obs, idx) => (
+                      <li key={idx}>{obs}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -220,7 +245,7 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
         {/* Modal Footer Actions */}
         <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/50 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-            Log ID: #FRNS-2026-90412
+            Log ID: #{docId ? `FRNS-${docId.toString().slice(-8).toUpperCase()}` : 'FRNS-ACTIVE'}
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -231,11 +256,12 @@ export default function ForensicViewerModal({ documentData, isOpen, onClose }) {
               Close
             </button>
             <button
-              onClick={() => alert(`Exporting full forensic PDF verdict report for ${documentData.name}...`)}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md shadow-indigo-600/20 transition-colors"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md shadow-indigo-600/20 transition-colors disabled:opacity-50"
             >
               <Download className="w-4 h-4" />
-              <span>Export Verdict Report</span>
+              <span>{isDownloading ? 'Generating Report...' : 'Export Verdict Report (.PDF)'}</span>
             </button>
           </div>
         </div>

@@ -2,56 +2,81 @@ import React from 'react';
 import { FileText, Eye, Filter } from 'lucide-react';
 
 export default function RecentDocumentsTable({ documents, searchQuery, onSelectDocument }) {
-  const filteredDocs = documents.filter(doc => 
-    doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    doc.result.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const formatResultLabel = (result) => {
+    const lower = (result || '').toLowerCase().trim();
+    if (lower.includes('tamper')) return 'Potentially Tampered';
+    if (lower.includes('authentic') || lower.includes('clean') || lower.includes('pass')) return 'Likely Authentic';
+    if (lower.includes('suspicious')) return 'Suspicious';
+    if (lower.includes('pending')) return 'Pending';
+    if (lower.includes('failed')) return 'Failed';
+    return 'Inconclusive';
+  };
 
-  const getResultBadgeStyle = (result) => {
-    switch (result) {
+  const filteredDocs = (documents || []).filter(doc => {
+    const name = (doc.name || '').toLowerCase();
+    const type = (doc.type || '').toLowerCase();
+    const result = (doc.result || '').toLowerCase();
+    const q = (searchQuery || '').toLowerCase();
+    return name.includes(q) || type.includes(q) || result.includes(q);
+  });
+
+  const getResultBadgeStyle = (label) => {
+    switch (label) {
       case 'Potentially Tampered':
         return 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/50';
       case 'Likely Authentic':
         return 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50';
       case 'Suspicious':
         return 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50';
+      case 'Pending':
+        return 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50';
+      case 'Failed':
+        return 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700';
       case 'Inconclusive':
       default:
         return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700';
     }
   };
 
-  const getRiskBarStyle = (riskPercent, result) => {
-    if (result === 'Likely Authentic') {
+  const getRiskBarStyle = (riskPercent, label) => {
+    if (riskPercent === null || riskPercent === undefined) {
+      return {
+        barColor: 'bg-slate-300 dark:bg-slate-700',
+        width: '0%',
+        text: 'N/A',
+        textColor: 'text-slate-400 dark:text-slate-500 font-mono'
+      };
+    }
+
+    if (label === 'Likely Authentic') {
       return {
         barColor: 'bg-emerald-500',
-        width: '15%',
-        text: 'Likely authentic',
-        textColor: 'text-emerald-600 dark:text-emerald-400'
+        width: `${Math.max(8, Math.min(100, riskPercent))}%`,
+        text: `${riskPercent}%`,
+        textColor: 'text-emerald-600 dark:text-emerald-400 font-mono font-bold'
       };
     }
-    if (result === 'Potentially Tampered' || riskPercent >= 75) {
+    if (label === 'Potentially Tampered' || riskPercent >= 55) {
       return {
         barColor: 'bg-rose-600',
-        width: `${riskPercent}%`,
+        width: `${Math.max(10, Math.min(100, riskPercent))}%`,
         text: `${riskPercent}%`,
-        textColor: 'text-rose-600 dark:text-rose-400 font-bold'
+        textColor: 'text-rose-600 dark:text-rose-400 font-mono font-bold'
       };
     }
-    if (result === 'Suspicious' || (riskPercent >= 50 && riskPercent < 75)) {
+    if (label === 'Suspicious' || riskPercent >= 35) {
       return {
         barColor: 'bg-amber-500',
-        width: `${riskPercent}%`,
+        width: `${Math.max(10, Math.min(100, riskPercent))}%`,
         text: `${riskPercent}%`,
-        textColor: 'text-amber-600 dark:text-amber-400 font-bold'
+        textColor: 'text-amber-600 dark:text-amber-400 font-mono font-bold'
       };
     }
     return {
       barColor: 'bg-slate-400',
-      width: `${riskPercent}%`,
+      width: `${Math.max(5, Math.min(100, riskPercent))}%`,
       text: `${riskPercent}%`,
-      textColor: 'text-slate-500 dark:text-slate-400'
+      textColor: 'text-slate-500 dark:text-slate-400 font-mono'
     };
   };
 
@@ -97,7 +122,8 @@ export default function RecentDocumentsTable({ documents, searchQuery, onSelectD
               </tr>
             ) : (
               filteredDocs.map((doc) => {
-                const risk = getRiskBarStyle(doc.riskPercent, doc.result);
+                const label = formatResultLabel(doc.result);
+                const risk = getRiskBarStyle(doc.riskPercent, label);
                 return (
                   <tr 
                     key={doc.id}
@@ -128,9 +154,9 @@ export default function RecentDocumentsTable({ documents, searchQuery, onSelectD
 
                     {/* Result Pill Badge */}
                     <td className="py-3.5 px-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${getResultBadgeStyle(doc.result)}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${getResultBadgeStyle(label)}`}>
                         <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                        {doc.result}
+                        {label}
                       </span>
                     </td>
 

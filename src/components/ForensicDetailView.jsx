@@ -21,6 +21,44 @@ export default function ForensicDetailView({ documentData, onBack }) {
   const [activeFindingId, setActiveFindingId] = useState(1);
   const [isLaserScanning, setIsLaserScanning] = useState(true);
   const [showOverlays, setShowOverlays] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+
+  const handleDownloadReport = async () => {
+    try {
+      setIsDownloading(true);
+      setDownloadError('');
+      const token = localStorage.getItem('docguard_token');
+      const docId = documentData?.id || documentData?.raw?._id || documentData?._id;
+      if (!docId) {
+        throw new Error('Document ID is required to generate the report.');
+      }
+      const res = await fetch(`http://localhost:5000/dashboard/document/${docId}/report`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.message || `Failed to generate forensic report (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = (docName || 'Document').replace(/[^a-zA-Z0-9._-]/g, '_');
+      a.download = `DocuGuard_Forensic_Report_${safeName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err.message);
+      alert('Could not download report: ' + err.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const laserRef = useRef(null);
   const riskPathRef = useRef(null);
@@ -556,13 +594,13 @@ export default function ForensicDetailView({ documentData, onBack }) {
                   suspiciousRegions.map((region, idx) => {
                     const fId = region.id || idx + 1;
                     const isSelected = activeFindingId === fId;
-                    const isHighRisk = (region.confidence || 80) >= 80 || (region.issue && region.issue.toLowerCase().includes('modification'));
+                    const isHighRisk = (region.confidence || 80) >= 70;
 
                     return (
                       <div 
                         key={fId}
                         onClick={() => setActiveFindingId(fId)}
-                        className={`p-4 rounded-2xl border-2 transition-all cursor-pointer space-y-2.5 ${
+                        className={`p-4 rounded-2xl border-2 transition-all cursor-pointer space-y-3 ${
                           isSelected 
                             ? isHighRisk
                               ? 'border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 shadow-md' 
@@ -570,9 +608,10 @@ export default function ForensicDetailView({ documentData, onBack }) {
                             : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/40 dark:bg-slate-800/20'
                         }`}
                       >
+                        {/* Header */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className={`w-8 h-8 rounded-xl ${isHighRisk ? 'bg-rose-600' : 'bg-amber-500'} text-white flex items-center justify-center font-bold text-xs shrink-0`}>
+                            <div className={`w-8 h-8 rounded-xl ${isHighRisk ? 'bg-rose-600' : 'bg-amber-500'} text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm`}>
                               {isHighRisk ? '✏️' : '📋'}
                             </div>
                             <div className="min-w-0">
@@ -580,19 +619,55 @@ export default function ForensicDetailView({ documentData, onBack }) {
                                 Finding 0{fId}: {region.label || `Region ${fId}`}
                               </h4>
                               <span className={`text-[11px] font-extrabold ${isHighRisk ? 'text-rose-600 dark:text-rose-400' : 'text-amber-600 dark:text-amber-400'} block truncate`}>
-                                {region.issue || 'Anomaly detected'}
+                                {region.issue || 'Visual anomaly detected'}
                               </span>
                             </div>
                           </div>
 
-                          <span className={`text-xs font-black ${isHighRisk ? 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950' : 'text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950'} font-mono px-2 py-0.5 rounded-md shrink-0`}>
-                            {region.confidence}%
+                          <span className={`text-xs font-black ${isHighRisk ? 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950' : 'text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950'} font-mono px-2 py-0.5 rounded-md shrink-0 border border-current/20`}>
+                            {region.confidence}% intensity
                           </span>
                         </div>
 
-                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
-                          {region.detail || region.issue}
-                        </p>
+                        {/* What was detected */}
+                        <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 text-xs space-y-1">
+                          <p className="font-bold text-slate-800 dark:text-slate-200">What we detected:</p>
+                          <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-sans">
+                            {region.detail || region.issue}
+                          </p>
+                        </div>
+
+                        {/* Why it matters */}
+                        {region.whyItMatters && (
+                          <div className="bg-amber-50/60 dark:bg-amber-950/20 p-2.5 rounded-xl border border-amber-200/50 dark:border-amber-900/30 text-xs space-y-1">
+                            <p className="font-bold text-amber-900 dark:text-amber-300">Why it matters:</p>
+                            <p className="text-amber-800 dark:text-amber-300/90 leading-relaxed font-sans">
+                              {region.whyItMatters}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Evidence */}
+                        {region.evidence && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">Evidence: </span>
+                            {region.evidence}
+                          </div>
+                        )}
+
+                        {/* Recommended action */}
+                        {region.recommendedAction && (
+                          <div className="text-[11px] text-indigo-700 dark:text-indigo-300 bg-indigo-50/60 dark:bg-indigo-950/30 p-2 rounded-lg font-sans">
+                            <span className="font-bold">Recommended Action: </span>
+                            {region.recommendedAction}
+                          </div>
+                        )}
+
+                        {/* Bounding Box Coordinates */}
+                        <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                          <span>📍 Coordinates: [x: {region.x}, y: {region.y}, w: {region.width}, h: {region.height}]</span>
+                          <span>Page {region.page || 1}</span>
+                        </div>
                       </div>
                     );
                   })
@@ -601,7 +676,7 @@ export default function ForensicDetailView({ documentData, onBack }) {
                     <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
                     <h4 className="font-extrabold text-slate-900 dark:text-white text-sm">No Irregularities Detected</h4>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      This document passed all visual, font, and pixel edge sharpness checks.
+                      This document conformed to baseline visual texture, font alignment, and pixel edge sharpness parameters.
                     </p>
                   </div>
                 )}
@@ -611,38 +686,121 @@ export default function ForensicDetailView({ documentData, onBack }) {
 
             {/* Tab 2: OCR Extracted Text */}
             {activeTab === 'ocr' && (
-              <div className="space-y-3 font-mono text-xs">
-                <div className="bg-slate-900 text-slate-200 p-4 rounded-2xl space-y-2 overflow-x-auto">
-                  <p className="text-indigo-400 font-bold">// Extracted Document Text (OCR Engine)</p>
+              <div className="space-y-3 text-xs">
+                {/* Engine Banner */}
+                <div className="bg-slate-100 dark:bg-slate-800/70 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">OCR ENGINE</span>
+                    <p className="font-bold text-slate-900 dark:text-white">
+                      {ocrList[0]?.engine || 'RapidOCR (PP-OCRv4 ONNX)'}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-mono font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2.5 py-1 rounded-full">
+                    {ocrList.length} items extracted
+                  </span>
+                </div>
+
+                {/* Extracted Text List */}
+                <div className="bg-slate-900 text-slate-200 p-4 rounded-2xl space-y-2 font-mono max-h-[380px] overflow-y-auto">
                   {ocrList.length > 0 ? (
                     ocrList.map((item, idx) => (
-                      <p key={idx} className={item.suspicious ? "text-rose-400 font-bold" : ""}>
-                        {item.field ? `${item.field.toUpperCase()}: ` : ''}{item.value} {item.suspicious ? '[FLAGGED REGION]' : ''}
-                      </p>
+                      <div 
+                        key={idx} 
+                        className={`p-2 rounded-lg border transition-colors ${
+                          item.suspicious 
+                            ? 'bg-rose-950/40 border-rose-800/60 text-rose-300' 
+                            : 'bg-slate-800/40 border-slate-700/50 text-slate-200 hover:bg-slate-800/70'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
+                          <span className="text-indigo-400 font-bold truncate">
+                            {item.field || `Line ${idx + 1}`}
+                          </span>
+                          <span className={`px-1.5 py-0.2 rounded ${
+                            item.confidence >= 80 ? 'text-emerald-400 bg-emerald-950/60' :
+                            item.confidence >= 60 ? 'text-amber-400 bg-amber-950/60' :
+                            'text-rose-400 bg-rose-950/60'
+                          }`}>
+                            {item.confidence}% conf
+                          </span>
+                        </div>
+                        <p className="font-sans text-xs break-words text-slate-100">
+                          {item.value}
+                        </p>
+                        {item.suspicious && (
+                          <span className="text-[9px] font-mono uppercase font-bold text-rose-400 mt-1 block">
+                            ⚠️ Low OCR Confidence / Potential Alteration Area
+                          </span>
+                        )}
+                      </div>
                     ))
                   ) : (
-                    <p className="text-slate-400 leading-relaxed">
-                      No OCR text items extracted. (Install Tesseract OCR to enable line-by-line text parsing).
+                    <p className="text-slate-400 leading-relaxed font-sans text-xs p-2">
+                      No text elements extracted for this page. The document may contain low contrast, handwriting, or purely graphic elements.
                     </p>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Tab 3: Analysis Details */}
+            {/* Tab 3: Analysis Details & Metadata */}
             {activeTab === 'details' && (
-              <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 max-h-[420px] overflow-y-auto pr-1">
+                {/* Section A: Technical File Details */}
                 <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl space-y-2 border border-slate-100 dark:border-slate-800 font-mono">
-                  <p><span className="font-bold text-slate-900 dark:text-white">PDF Producer:</span> {metadata.pdfProducer || 'N/A'}</p>
-                  <p><span className="font-bold text-slate-900 dark:text-white">Creation Date:</span> {metadata.creationDate || 'N/A'}</p>
-                  <p><span className="font-bold text-slate-900 dark:text-white">Modification Date:</span> {metadata.modificationDate || 'N/A'}</p>
-                  <p><span className="font-bold text-slate-900 dark:text-white">SHA-256 Hash:</span> <span className="text-[11px] break-all">{metadata.sha256 || 'N/A'}</span></p>
-                  {recommendation && (
-                    <p className="pt-2 border-t border-slate-200 dark:border-slate-700 font-sans">
-                      <span className="font-bold text-slate-900 dark:text-white">Recommendation:</span> {recommendation}
-                    </p>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                    FILE SPECIFICATIONS
+                  </span>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Filename:</span> {metadata.filename || docName}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Format:</span> {metadata.fileType || docType}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">File Size:</span> {metadata.fileSize || 'N/A'}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Dimensions:</span> {metadata.dimensions || `${docWidth}x${docHeight}`}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Color Mode:</span> {metadata.colorMode || 'RGB'}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">SHA-256 Hash:</span> <span className="text-[10px] break-all text-slate-500 dark:text-slate-400">{metadata.sha256 || 'N/A'}</span></p>
+                </div>
+
+                {/* Section B: Embedded Metadata */}
+                <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl space-y-2 border border-slate-100 dark:border-slate-800 font-mono">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                    EMBEDDED DOCUMENT METADATA
+                  </span>
+                  <p><span className="font-bold text-slate-900 dark:text-white">PDF Producer:</span> {metadata.pdfProducer || 'Not present in the file'}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Creation Date:</span> {metadata.creationDate || 'Not present in the file'}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">Modification Date:</span> {metadata.modificationDate || 'Not present in the file'}</p>
+                  <p><span className="font-bold text-slate-900 dark:text-white">PDF Version:</span> {metadata.pdfVersion || 'N/A'}</p>
+                  {metadata.title && metadata.title !== 'Not present in the file' && (
+                    <p><span className="font-bold text-slate-900 dark:text-white">Title:</span> {metadata.title}</p>
+                  )}
+                  {metadata.author && metadata.author !== 'Not present in the file' && (
+                    <p><span className="font-bold text-slate-900 dark:text-white">Author:</span> {metadata.author}</p>
                   )}
                 </div>
+
+                {/* Section C: Observations */}
+                {metadata.observations && metadata.observations.length > 0 && (
+                  <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-2xl space-y-2 border border-indigo-100 dark:border-indigo-900/30">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 font-mono block">
+                      FORENSIC OBSERVATIONS
+                    </span>
+                    <ul className="space-y-1.5 list-disc list-inside font-sans text-slate-700 dark:text-slate-300">
+                      {metadata.observations.map((obs, idx) => (
+                        <li key={idx} className="leading-relaxed">{obs}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Section D: Recommendation */}
+                {recommendation && (
+                  <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl space-y-1.5 border border-slate-100 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                      RECOMMENDATION
+                    </span>
+                    <p className="font-sans text-slate-700 dark:text-slate-300 leading-relaxed">
+                      {recommendation}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -650,11 +808,12 @@ export default function ForensicDetailView({ documentData, onBack }) {
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
               <button
                 type="button"
-                onClick={() => alert(`Downloading official Forensic PDF Report for ${docName}...`)}
-                className="w-full py-3 bg-slate-900 dark:bg-slate-100 hover:bg-slate-800 dark:hover:bg-slate-200 text-white dark:text-slate-900 font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 group cursor-pointer"
+                onClick={handleDownloadReport}
+                disabled={isDownloading}
+                className="w-full py-3 bg-slate-900 dark:bg-slate-100 hover:bg-slate-800 dark:hover:bg-slate-200 text-white dark:text-slate-900 font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 group cursor-pointer disabled:opacity-50"
               >
                 <Download className="w-4 h-4" />
-                <span>Download Forensic Report (.PDF)</span>
+                <span>{isDownloading ? 'Generating Forensic Report...' : 'Download Forensic Report (.PDF)'}</span>
               </button>
 
               <button

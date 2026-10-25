@@ -2,15 +2,15 @@ import React from 'react';
 import { PieChart } from 'lucide-react';
 
 export default function DetectionBreakdown({ stats }) {
-  const total = stats?.total || 128;
-  const authentic = stats?.authentic || 91;
-  const suspicious = stats?.suspicious || 24;
-  const tampered = stats?.tampered || 13;
+  const total = stats?.totalAnalyzed ?? stats?.total ?? 0;
+  const authentic = stats?.likelyAuthentic ?? stats?.authentic ?? 0;
+  const suspicious = stats?.suspicious ?? 0;
+  const tampered = stats?.potentiallyTampered ?? stats?.tampered ?? 0;
 
-  // Percentages
-  const pAuth = Math.round((authentic / total) * 100);
-  const pSusp = Math.round((suspicious / total) * 100);
-  const pTamp = 100 - pAuth - pSusp;
+  // Dynamic percentages (matching the 4 statistic cards exactly)
+  const pAuth = stats?.percentages?.likelyAuthentic ?? (total > 0 ? Number(((authentic / total) * 100).toFixed(1)) : 0);
+  const pSusp = stats?.percentages?.suspicious ?? (total > 0 ? Number(((suspicious / total) * 100).toFixed(1)) : 0);
+  const pTamp = stats?.percentages?.potentiallyTampered ?? (total > 0 ? Number(((tampered / total) * 100).toFixed(1)) : 0);
 
   // SVG Donut calculations
   const size = 180;
@@ -18,9 +18,9 @@ export default function DetectionBreakdown({ stats }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
 
-  const authStroke = (pAuth / 100) * circumference;
-  const suspStroke = (pSusp / 100) * circumference;
-  const tampStroke = (pTamp / 100) * circumference;
+  const authStroke = total > 0 ? (pAuth / 100) * circumference : 0;
+  const suspStroke = total > 0 ? (pSusp / 100) * circumference : 0;
+  const tampStroke = total > 0 ? (pTamp / 100) * circumference : 0;
 
   // Offsets for cumulative segments (clockwise start from top -90deg)
   const authOffset = 0;

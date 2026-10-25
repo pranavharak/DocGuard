@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { FileText, Plus, CheckCircle2, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { gsap } from 'gsap';
 
-export default function MetricsOverview({ onOpenUpload, stats }) {
+export default function MetricsOverview({ onOpenUpload, stats, username = 'Researcher', isLoading = false }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -16,12 +16,21 @@ export default function MetricsOverview({ onOpenUpload, stats }) {
     }
   }, []);
 
+  const total = stats?.totalAnalyzed ?? stats?.total ?? 0;
+  const authentic = stats?.likelyAuthentic ?? stats?.authentic ?? 0;
+  const suspicious = stats?.suspicious ?? 0;
+  const tampered = stats?.potentiallyTampered ?? stats?.tampered ?? 0;
+
+  const pctAuthentic = stats?.percentages?.likelyAuthentic ?? (total > 0 ? Number(((authentic / total) * 100).toFixed(1)) : 0);
+  const pctSuspicious = stats?.percentages?.suspicious ?? (total > 0 ? Number(((suspicious / total) * 100).toFixed(1)) : 0);
+  const pctTampered = stats?.percentages?.potentiallyTampered ?? (total > 0 ? Number(((tampered / total) * 100).toFixed(1)) : 0);
+
   const metrics = [
     {
       title: 'TOTAL ANALYZED',
-      value: stats?.total || 128,
-      subtext: 'Documents analyzed',
-      footer: 'All time total',
+      value: total,
+      subtext: 'Distinct documents analyzed',
+      footer: 'Completed assessments',
       footerStyle: 'text-slate-400 font-mono',
       valueColor: 'text-slate-900 dark:text-white',
       badge: null,
@@ -30,36 +39,36 @@ export default function MetricsOverview({ onOpenUpload, stats }) {
     },
     {
       title: 'LIKELY AUTHENTIC',
-      value: stats?.authentic || 91,
+      value: authentic,
       subtext: 'Low risk documents',
-      footer: 'Likely authentic',
+      footer: 'Baseline integrity confirmed',
       footerStyle: 'text-emerald-600 dark:text-emerald-400 font-mono',
       valueColor: 'text-emerald-600 dark:text-emerald-400',
-      badge: '• 71%',
+      badge: `• ${pctAuthentic}%`,
       badgeStyle: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40',
       icon: CheckCircle2,
       iconBg: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400'
     },
     {
       title: 'SUSPICIOUS',
-      value: stats?.suspicious || 24,
+      value: suspicious,
       subtext: 'Requires review',
-      footer: 'Potential anomalies',
+      footer: 'Potential visual anomalies',
       footerStyle: 'text-amber-600 dark:text-amber-400 font-mono',
       valueColor: 'text-amber-600 dark:text-amber-400',
-      badge: '• 19%',
+      badge: `• ${pctSuspicious}%`,
       badgeStyle: 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/40',
       icon: AlertTriangle,
       iconBg: 'bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400'
     },
     {
       title: 'POTENTIALLY TAMPERED',
-      value: stats?.tampered || 13,
+      value: tampered,
       subtext: 'High risk documents',
       footer: 'Flagged for inspection',
       footerStyle: 'text-rose-600 dark:text-rose-400 font-mono',
       valueColor: 'text-rose-600 dark:text-rose-400',
-      badge: '• 10%',
+      badge: `• ${pctTampered}%`,
       badgeStyle: 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200/50 dark:border-rose-800/40',
       icon: ShieldAlert,
       iconBg: 'bg-rose-50 text-rose-600 dark:bg-rose-900/40 dark:text-rose-400'
@@ -72,7 +81,7 @@ export default function MetricsOverview({ onOpenUpload, stats }) {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Welcome back, Pranav
+            Welcome back, {username}
           </h1>
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1">
             AI-Powered Document Tampering Detection System

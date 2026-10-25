@@ -11,21 +11,41 @@ import {
   Lock, 
   Sparkles,
   ArrowRight,
-  ShieldCheck
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react';
 import { gsap } from 'gsap';
 
 export default function AnalyzeDocumentView({ onStartAnalysis }) {
   const [selectedCategory, setSelectedCategory] = useState('educational'); // 'educational' | 'other'
   const [selectedType, setSelectedType] = useState('BE/Degree Marksheet');
-  const [attachedFile, setAttachedFile] = useState({
-    name: 'BE_Marksheet.pdf',
-    size: '2.4 MB',
-    type: 'Educational Marksheet',
-    status: 'Ready for Analysis'
-  });
-  const [analysisProgress, setAnalysisProgress] = useState(78);
+  const [attachedFile, setAttachedFile] = useState(null);
+  const [rawFile, setRawFile] = useState(null);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [pipelineStatus, setPipelineStatus] = useState('idle'); // 'idle' | 'in-progress' | 'completed' | 'failed'
+  const [activeStepId, setActiveStepId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const PIPELINE_STEPS = [
+    { id: 'upload', label: 'Document uploaded', detail: 'Transmitting file to secure analysis server' },
+    { id: 'validate', label: 'Document validated', detail: 'Format, integrity, and dimensions verified' },
+    { id: 'aiAnalysis', label: 'Detecting possible tampering', detail: 'Running neural visual anomaly model (FB-HPC)' },
+    { id: 'ocr', label: 'Checking document text', detail: 'Extracting text and checking font consistency' },
+    { id: 'metadata', label: 'Checking document properties', detail: 'Examining file structure, tags, and history' },
+    { id: 'risk', label: 'Calculating risk', detail: 'Evaluating anomaly score and confidence rating' },
+    { id: 'report', label: 'Preparing report', detail: 'Compiling final authenticity audit breakdown' }
+  ];
+
+  const [stepStates, setStepStates] = useState({
+    upload: 'pending',
+    validate: 'pending',
+    aiAnalysis: 'pending',
+    ocr: 'pending',
+    metadata: 'pending',
+    risk: 'pending',
+    report: 'pending'
+  });
 
   const containerRef = useRef(null);
 
@@ -48,8 +68,6 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
       setSelectedType('Invoice');
     }
   };
-
-  const [rawFile, setRawFile] = useState(null);
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -79,15 +97,25 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
   };
 
   const handleStartScan = async () => {
-    setIsAnalyzing(true);
-    let p = 0;
+    setErrorMessage('');
+    if (!rawFile && !attachedFile) {
+      setErrorMessage('Please select or upload a document before starting analysis.');
+      return;
+    }
 
-    const interval = setInterval(() => {
-      p += 10;
-      if (p < 75) {
-        setAnalysisProgress(p);
-      }
-    }, 150);
+    setIsAnalyzing(true);
+    setPipelineStatus('in-progress');
+    setAnalysisProgress(10);
+    setActiveStepId('upload');
+    setStepStates({
+      upload: 'in-progress',
+      validate: 'pending',
+      aiAnalysis: 'pending',
+      ocr: 'pending',
+      metadata: 'pending',
+      risk: 'pending',
+      report: 'pending'
+    });
 
     try {
       const token = localStorage.getItem('docguard_token');
@@ -96,11 +124,15 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
       if (rawFile) {
         formData.append('document', rawFile);
       } else {
-        const blob = new Blob(["DocuGuard Test Content"], { type: "application/pdf" });
-        formData.append('document', blob, attachedFile ? attachedFile.name : 'BE_Marksheet.pdf');
+        setErrorMessage('Uploaded file reference lost. Please select the file again.');
+        setIsAnalyzing(false);
+        setPipelineStatus('failed');
+        setStepStates(prev => ({ ...prev, upload: 'failed' }));
+        return;
       }
 
       // Step 1: Upload document
+      setAnalysisProgress(20);
       const uploadRes = await fetch('http://localhost:5000/dashboard/upload', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
@@ -110,15 +142,39 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
       const uploadData = await uploadRes.json();
 
       if (!uploadRes.ok || !uploadData.document) {
-        clearInterval(interval);
         setIsAnalyzing(false);
-        alert('Upload Error: ' + (uploadData.message || 'Failed to upload document'));
+        setPipelineStatus('failed');
+        setActiveStepId('upload');
+        setStepStates(prev => ({ ...prev, upload: 'failed' }));
+        setErrorMessage(uploadData.message || 'Failed to upload document.');
         return;
       }
 
-      setAnalysisProgress(80);
+      // Step 1 Completed, Step 2 Validating
+      setStepStates(prev => ({ ...prev, upload: 'completed', validate: 'in-progress' }));
+      setActiveStepId('validate');
+      setAnalysisProgress(35);
 
-      // Step 2: Trigger Analysis API POST /dashboard/analyze/:id
+      // Brief validation milestone pause
+      await new Promise(r => setTimeout(r, 400));
+      setStepStates(prev => ({ ...prev, validate: 'completed', aiAnalysis: 'in-progress' }));
+      setActiveStepId('aiAnalysis');
+      setAnalysisProgress(50);
+
+      // Stagger visual progress while backend neural inference + RapidOCR run
+      const progressTimer1 = setTimeout(() => {
+        setStepStates(prev => ({ ...prev, aiAnalysis: 'completed', ocr: 'in-progress' }));
+        setActiveStepId('ocr');
+        setAnalysisProgress(68);
+      }, 1000);
+
+      const progressTimer2 = setTimeout(() => {
+        setStepStates(prev => ({ ...prev, ocr: 'completed', metadata: 'in-progress' }));
+        setActiveStepId('metadata');
+        setAnalysisProgress(82);
+      }, 2200);
+
+      // Step 3-7: Trigger Analysis API POST /dashboard/analyze/:id
       const docId = uploadData.document._id;
       const analyzeRes = await fetch(`http://localhost:5000/dashboard/analyze/${docId}`, {
         method: 'POST',
@@ -128,44 +184,82 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
         }
       });
 
+      clearTimeout(progressTimer1);
+      clearTimeout(progressTimer2);
+
       const analyzeData = await analyzeRes.json();
-      clearInterval(interval);
+
+      if (!analyzeRes.ok || !analyzeData.document) {
+        setIsAnalyzing(false);
+        setPipelineStatus('failed');
+        setStepStates(prev => ({ ...prev, aiAnalysis: 'failed', ocr: 'failed' }));
+        setErrorMessage(analyzeData.message || 'Analysis failed. Ensure Python microservice is active.');
+        return;
+      }
+
+      // Mark remaining steps completed
+      setStepStates({
+        upload: 'completed',
+        validate: 'completed',
+        aiAnalysis: 'completed',
+        ocr: 'completed',
+        metadata: 'completed',
+        risk: 'completed',
+        report: 'completed'
+      });
+      setActiveStepId('report');
       setAnalysisProgress(100);
+      setPipelineStatus('completed');
 
       setTimeout(() => {
         setIsAnalyzing(false);
-        if (analyzeRes.ok && analyzeData.document) {
-          const doc = analyzeData.document;
-          const analysis = analyzeData.analysis || doc.analysis || {};
-          
-          if (onStartAnalysis) {
-            onStartAnalysis({
-              id: doc._id || Date.now(),
-              name: doc.filename || doc.fileName || 'Document.pdf',
-              type: selectedType,
-              date: new Date(doc.dateOfUpload || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-              result: doc.result || analysis.result || 'Potentially tampered',
-              riskPercent: doc.riskScore || analysis.riskScore || 82,
-              confidence: doc.confidence || analysis.confidence || 91,
-              suspiciousRegions: doc.suspiciousRegions || analysis.suspiciousRegions || [],
-              manipulationTypes: doc.manipulationTypes || analysis.manipulationTypes || [],
-              ocr: doc.ocr || analysis.ocr || [],
-              metadata: doc.metadata || analysis.metadata || {},
-              explanation: doc.explanation || analysis.explanation || '',
-              recommendation: doc.recommendation || analysis.recommendation || '',
-              raw: doc
-            });
-          }
-        } else {
-          alert('Analysis Error: ' + (analyzeData.message || 'Failed to process document analysis'));
+        const doc = analyzeData.document;
+        const analysis = analyzeData.analysis || doc.analysis || {};
+        
+        if (onStartAnalysis) {
+          onStartAnalysis({
+            id: doc._id || Date.now(),
+            name: doc.filename || doc.fileName || 'Document.pdf',
+            type: selectedType,
+            date: new Date(doc.dateOfUpload || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            result: doc.result || analysis.result || 'potentially_tampered',
+            riskPercent: doc.riskScore ?? analysis.riskScore ?? 0,
+            confidence: doc.confidence ?? analysis.confidence ?? 0,
+            suspiciousRegions: doc.suspiciousRegions || analysis.suspiciousRegions || [],
+            manipulationTypes: doc.manipulationTypes || analysis.manipulationTypes || [],
+            ocr: doc.ocr || analysis.ocr || [],
+            metadata: doc.metadata || analysis.metadata || {},
+            explanation: doc.explanation || analysis.explanation || '',
+            recommendation: doc.recommendation || analysis.recommendation || '',
+            raw: doc
+          });
         }
-      }, 400);
+      }, 600);
 
     } catch (err) {
-      clearInterval(interval);
       setIsAnalyzing(false);
-      alert('Network Error uploading/analyzing document: ' + err.message);
+      setPipelineStatus('failed');
+      setErrorMessage('Network or server error: ' + err.message);
     }
+  };
+
+  const handleReset = () => {
+    setAttachedFile(null);
+    setRawFile(null);
+    setAnalysisProgress(0);
+    setIsAnalyzing(false);
+    setPipelineStatus('idle');
+    setActiveStepId(null);
+    setErrorMessage('');
+    setStepStates({
+      upload: 'pending',
+      validate: 'pending',
+      aiAnalysis: 'pending',
+      ocr: 'pending',
+      metadata: 'pending',
+      risk: 'pending',
+      report: 'pending'
+    });
   };
 
   return (
@@ -440,22 +534,44 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
 
         </div>
 
-        {/* Right Column: Analysis Steps & Progress Sidebar */}
+        {/* Right Column: Dynamic Analysis Steps & Progress Sidebar */}
         <div className="lg:col-span-4 space-y-6">
           <div className="gsap-step-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm transition-colors space-y-6">
             
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></span>
+                <span className={`w-2 h-2 rounded-full ${
+                  pipelineStatus === 'in-progress' ? 'bg-indigo-600 animate-ping' :
+                  pipelineStatus === 'completed' ? 'bg-emerald-500' :
+                  pipelineStatus === 'failed' ? 'bg-rose-500' : 'bg-slate-400'
+                }`}></span>
                 <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
-                  Analysis Steps
+                  Analysis Pipeline
                 </h3>
               </div>
-              <span className="text-[11px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 px-2.5 py-0.5 rounded-full">
-                In Progress
+              <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                pipelineStatus === 'in-progress' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' :
+                pipelineStatus === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' :
+                pipelineStatus === 'failed' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300' :
+                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+              }`}>
+                {pipelineStatus === 'in-progress' ? 'In Progress' :
+                 pipelineStatus === 'completed' ? 'Completed' :
+                 pipelineStatus === 'failed' ? 'Failed' : 'Idle'}
               </span>
             </div>
+
+            {/* Error Message Banner */}
+            {errorMessage && (
+              <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 p-3 rounded-2xl flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold">Error</p>
+                  <p className="text-[11px] leading-relaxed">{errorMessage}</p>
+                </div>
+              </div>
+            )}
 
             {/* Analysis Progress Box */}
             <div className="bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/40 rounded-2xl p-4 space-y-2">
@@ -470,117 +586,96 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
               
               <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
                 <div 
-                  className="h-full bg-indigo-600 transition-all duration-300 rounded-full"
+                  className={`h-full transition-all duration-300 rounded-full ${
+                    pipelineStatus === 'failed' ? 'bg-rose-500' :
+                    pipelineStatus === 'completed' ? 'bg-emerald-500' : 'bg-indigo-600'
+                  }`}
                   style={{ width: `${analysisProgress}%` }}
                 ></div>
               </div>
 
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                Scanning document sections and comparing formatting patterns...
+                {pipelineStatus === 'idle' ? 'Ready to analyze document once uploaded.' :
+                 pipelineStatus === 'in-progress' ? 'Executing multi-stage forensic analysis & neural inspection...' :
+                 pipelineStatus === 'completed' ? 'Analysis complete! Rendering forensic audit report.' :
+                 'Pipeline encountered an issue during execution.'}
               </p>
             </div>
 
-            {/* Steps Checklist */}
-            <div className="space-y-4 pt-2">
-              
-              {/* Step 1 */}
-              <div className="flex items-start gap-3 text-xs">
-                <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 stroke-[3]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-900 dark:text-white">Document uploaded</span>
-                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">Completed</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">Document uploaded successfully</p>
-                </div>
-              </div>
+            {/* Dynamic Steps Checklist */}
+            <div className="space-y-3.5 pt-1">
+              {PIPELINE_STEPS.map((step) => {
+                const state = stepStates[step.id] || 'pending';
+                const isCurrent = activeStepId === step.id && state === 'in-progress';
+                const isDone = state === 'completed';
+                const isFail = state === 'failed';
 
-              {/* Step 2 */}
-              <div className="flex items-start gap-3 text-xs">
-                <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 stroke-[3]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-900 dark:text-white">Document validated</span>
-                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">Completed</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">Structure and format checked</p>
-                </div>
-              </div>
+                return (
+                  <div 
+                    key={step.id} 
+                    className={`flex items-start gap-3 text-xs rounded-xl transition-colors ${
+                      isCurrent 
+                        ? 'bg-indigo-50/60 dark:bg-indigo-950/40 -mx-2 p-2 border border-indigo-100 dark:border-indigo-900/40' 
+                        : isFail
+                        ? 'bg-rose-50/50 dark:bg-rose-950/30 -mx-2 p-2 border border-rose-200 dark:border-rose-900/50'
+                        : isDone
+                        ? ''
+                        : 'opacity-70'
+                    }`}
+                  >
+                    {/* Status Icon */}
+                    {isDone ? (
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 stroke-[3]" />
+                      </div>
+                    ) : isCurrent ? (
+                      <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 animate-spin">
+                        <RotateCw className="w-3 h-3" />
+                      </div>
+                    ) : isFail ? (
+                      <div className="w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                      </div>
+                    ) : (
+                      <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center shrink-0 mt-0.5">
+                        <Circle className="w-3 h-3" />
+                      </div>
+                    )}
 
-              {/* Step 3 (In progress) */}
-              <div className="flex items-start gap-3 text-xs bg-indigo-50/50 dark:bg-indigo-950/30 -mx-2 p-2 rounded-xl border border-indigo-100 dark:border-indigo-900/40">
-                <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 animate-spin">
-                  <RotateCw className="w-3 h-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-indigo-700 dark:text-indigo-300">Detecting possible tampering</span>
-                    <span className="text-[10px] font-black text-white bg-indigo-600 px-1.5 py-0.2 rounded font-mono">78%</span>
+                    {/* Step Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center">
+                        <span className={`font-bold ${
+                          isCurrent ? 'text-indigo-700 dark:text-indigo-300' :
+                          isFail ? 'text-rose-700 dark:text-rose-400' :
+                          isDone ? 'text-slate-900 dark:text-white' :
+                          'text-slate-600 dark:text-slate-400'
+                        }`}>
+                          {step.label}
+                        </span>
+                        <span className={`text-[10px] font-bold ${
+                          isDone ? 'text-emerald-600 dark:text-emerald-400' :
+                          isCurrent ? 'text-indigo-600 dark:text-indigo-400 font-extrabold animate-pulse' :
+                          isFail ? 'text-rose-600 dark:text-rose-400' :
+                          'text-slate-400'
+                        }`}>
+                          {isDone ? 'Completed' :
+                           isCurrent ? 'Processing...' :
+                           isFail ? 'Failed' :
+                           'Queued'}
+                        </span>
+                      </div>
+                      <p className={`text-[11px] leading-tight mt-0.5 ${
+                        isCurrent ? 'text-indigo-600/80 dark:text-indigo-300/80' :
+                        isFail ? 'text-rose-500' :
+                        'text-slate-400 dark:text-slate-500'
+                      }`}>
+                        {step.detail}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-indigo-600/80 dark:text-indigo-300/80">Checking for digital alterations and modified image areas</p>
-                </div>
-              </div>
-
-              {/* Step 4 */}
-              <div className="flex items-start gap-3 text-xs opacity-70">
-                <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Circle className="w-3 h-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Checking document text</span>
-                    <span className="text-[10px] font-medium text-slate-400">Queued</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Verifying font consistency and spacing</p>
-                </div>
-              </div>
-
-              {/* Step 5 */}
-              <div className="flex items-start gap-3 text-xs opacity-70">
-                <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Circle className="w-3 h-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Checking document properties</span>
-                    <span className="text-[10px] font-medium text-slate-400">Queued</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Examining file history and creation dates</p>
-                </div>
-              </div>
-
-              {/* Step 6 */}
-              <div className="flex items-start gap-3 text-xs opacity-70">
-                <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Circle className="w-3 h-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Calculating risk</span>
-                    <span className="text-[10px] font-medium text-slate-400">Queued</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Evaluating anomaly score and confidence rating</p>
-                </div>
-              </div>
-
-              {/* Step 7 */}
-              <div className="flex items-start gap-3 text-xs opacity-70">
-                <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Circle className="w-3 h-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Preparing report</span>
-                    <span className="text-[10px] font-medium text-slate-400">Queued</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Compiling final authenticity audit breakdown</p>
-                </div>
-              </div>
-
+                );
+              })}
             </div>
 
             {/* Bottom Actions */}
@@ -597,7 +692,7 @@ export default function AnalyzeDocumentView({ onStartAnalysis }) {
 
               <button
                 type="button"
-                onClick={() => setAttachedFile(null)}
+                onClick={handleReset}
                 className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2"
               >
                 <File className="w-3.5 h-3.5" />
